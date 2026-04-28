@@ -1,0 +1,34 @@
+name: mcp_form
+description: Form document creation, validation, rendering, and management for the MCP ecosystem.
+version: 0.1.0
+homepage: https://app-appplayer.github.io/makemind
+repository: https://github.com/app-appplayer/mcp_form
+issue_tracker: https://github.com/app-appplayer/mcp_form/issues
+
+topics:
+  - form
+  - mcp
+  - ai
+  - dart
+  - document
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  collection: ^1.18.0
+  mcp_bundle: ^0.3.0
+  meta: ^1.9.0
+
+dev_dependencies:
+  lints: ^3.0.0
+  mockito: ^5.4.0
+  test: ^1.24.0
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
