@@ -71,6 +71,29 @@ Map<String, dynamic> _renderToJson(FormRenderOutput output) {
 
 void main() {
   group('UiDslRenderer', () {
+    test('Image node serializes maxWidth / aspectRatio / style', () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormImageBlock(
+              blockId: 'seal',
+              index: 0,
+              src: 'stamp.png',
+              alt: 'seal',
+              maxWidth: 120,
+              aspectRatio: 1,
+              style: const {'align': 'right'},
+            ),
+          ]),
+        ]),
+      ));
+      final image = _firstBlock(_renderToJson(output));
+      expect(image['type'], 'Image');
+      expect(image['maxWidth'], 120);
+      expect(image['aspectRatio'], 1);
+      expect((image['style'] as Map)['align'], 'right');
+    });
+
     test('supportedFormats includes uiDsl', () {
       expect(_renderer.supportedFormats, contains('uiDsl'));
     });

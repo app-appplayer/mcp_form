@@ -177,7 +177,9 @@ void main() {
       expect(htmlString, contains('Pump A-100'));
       expect(htmlString, contains('html'));
 
-      final pdfString = utf8.decode(pdfOutput.content as List<int>);
+      // PDF streams may be FlateDecode-compressed binary; decode leniently.
+      final pdfString =
+          latin1.decode(pdfOutput.content as List<int>, allowInvalid: true);
       expect(pdfString, contains('%PDF'));
 
       // Step 8: Transition draft -> review -> approved -> published

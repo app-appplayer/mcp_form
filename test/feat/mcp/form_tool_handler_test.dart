@@ -8,6 +8,7 @@ import 'package:mcp_form/src/feat/mcp/form_tool_handler.dart';
 import 'package:mcp_form/src/feat/mcp/mcp_types.dart';
 import 'package:mcp_form/src/infra/renderer/render_context.dart';
 import 'package:mcp_form/src/infra/renderer/renderer_registry.dart';
+import 'package:mcp_form/src/infra/renderer/standard_renderers.dart';
 import 'package:test/test.dart';
 
 // --- Stub ports for failure scenarios ---
@@ -193,6 +194,114 @@ class DocExistsButValidateFailsFormPort implements FormPort {
       FormResult.ok([]);
 }
 
+/// A FormTemplatePort where deleteTemplate always fails.
+class FailingDeleteTemplatePort extends FailingTemplatePort {
+  @override
+  Future<FormResult<void>> deleteTemplate({
+    required String templateId,
+    String? version,
+  }) async {
+    return FormResult.fail(FormError(
+      code: 'template.delete_failed',
+      message: 'Cannot delete',
+    ));
+  }
+}
+
+/// A FormTemplatePort where getTemplateVersions always fails.
+class FailingVersionsTemplatePort extends FailingTemplatePort {
+  @override
+  Future<FormResult<List<FormTemplateVersion>>> getTemplateVersions({
+    required String templateId,
+  }) async {
+    return FormResult.fail(FormError(
+      code: 'template.not_found',
+      message: 'Versions not found',
+    ));
+  }
+}
+
+/// A FormTemplatePort that returns versions with author and changeDescription.
+class VersionsWithMetaTemplatePort extends FailingTemplatePort {
+  @override
+  Future<FormResult<List<FormTemplateVersion>>> getTemplateVersions({
+    required String templateId,
+  }) async {
+    return FormResult.ok([
+      FormTemplateVersion(
+        templateId: templateId,
+        version: '1.0.0',
+        createdAt: DateTime(2026),
+        author: 'Alice',
+        changeDescription: 'Initial release',
+      ),
+    ]);
+  }
+}
+
+/// A FormPort that returns a document with validation warnings.
+class DocExistsWithWarningsFormPort implements FormPort {
+  final FormDocument _doc;
+
+  DocExistsWithWarningsFormPort(this._doc);
+
+  @override
+  Future<FormResult<FormDocument>> getDocument({
+    required String documentId,
+  }) async =>
+      FormResult.ok(_doc);
+
+  @override
+  Future<FormResult<FormValidationResult>> validate({
+    required FormDocument document,
+    bool autoFix = false,
+  }) async {
+    return FormResult.ok(FormValidationResult(
+      isValid: true,
+      issues: [
+        FormValidationIssue(
+          code: 'warn.field_empty',
+          message: 'Optional field is empty',
+          path: '/data/notes',
+          severity: 'warning',
+        ),
+      ],
+    ));
+  }
+
+  @override
+  Future<FormResult<FormDocument>> createDocument({
+    required String templateId,
+    required Map<String, dynamic> initialData,
+    String? documentId,
+    String? author,
+  }) async =>
+      FormResult.fail(FormError(code: 'err', message: 'err'));
+
+  @override
+  Future<FormResult<List<FormDocument>>> listDocuments({
+    String? templateId,
+    String? status,
+    int? limit,
+    int? offset,
+  }) async =>
+      FormResult.ok([]);
+
+  @override
+  Future<FormResult<FormDocument>> patch({
+    required String documentId,
+    required List<FormPatchOperation> operations,
+    required int targetVersion,
+  }) async =>
+      FormResult.fail(FormError(code: 'err', message: 'err'));
+
+  @override
+  Future<FormResult<List<FormDocumentVersion>>> getDocumentHistory({
+    required String documentId,
+  }) async =>
+      FormResult.ok([]);
+}
+
 /// A FormRendererPort that always fails.
 class FailingRendererPort implements FormRendererPort {
   @override
@@ -322,6 +431,146 @@ void main() {
 
       expect(result['templates'], isList);
       expect(result['total'], 2);
+    });
+
+    // TC-349b: template CRUD surface (Form Builder capability)
+    test('form.save_template creates a new template', () async {
+      final result = await handler.handleToolCall(
+        toolName: 'form.save_template',
+        arguments: {
+          'template': _makeTemplate(id: 'tpl-3', name: 'Invoice').toJson(),
+        },
+      );
+      expect(result['templateId'], 'tpl-3');
+      expect(result['version'], '1.0.0');
+
+      // Now visible via list.
+      final listed = await handler.handleToolCall(
+        toolName: 'form.list_templates',
+        arguments: {},
+      );
+      expect(listed['total'], 3);
+    });
+
+    test('form.save_template rejects duplicate templateId+version', () async {
+      final call = handler.handleToolCall(
+        toolName: 'form.save_template',
+        arguments: {'template': _makeTemplate().toJson()}, // tpl-1 1.0.0 exists
+      );
+      await expectLater(call, throwsA(isA<McpToolError>()));
+    });
+
+    test('form.get_template returns the full template JSON', () async {
+      final result = await handler.handleToolCall(
+        toolName: 'form.get_template',
+        arguments: {'templateId': 'tpl-1'},
+      );
+      final tpl = result['template'] as Map<String, dynamic>;
+      expect(tpl['templateId'], 'tpl-1');
+      expect(tpl['schema'], isMap);
+    });
+
+    test('form.get_template_versions lists version history', () async {
+      // Append a second version of tpl-1.
+      await handler.handleToolCall(
+        toolName: 'form.save_template',
+        arguments: {
+          'template': (_makeTemplate(name: 'Test v2').toJson()
+            ..['version'] = '1.1.0'),
+        },
+      );
+      final result = await handler.handleToolCall(
+        toolName: 'form.get_template_versions',
+        arguments: {'templateId': 'tpl-1'},
+      );
+      final versions = result['versions'] as List<dynamic>;
+      expect(versions.length, 2);
+      expect(
+        versions.map((v) => (v as Map)['version']),
+        containsAll(<String>['1.0.0', '1.1.0']),
+      );
+    });
+
+    test('form.delete_template removes the template', () async {
+      final del = await handler.handleToolCall(
+        toolName: 'form.delete_template',
+        arguments: {'templateId': 'tpl-2'},
+      );
+      expect(del['deleted'], true);
+
+      final listed = await handler.handleToolCall(
+        toolName: 'form.list_templates',
+        arguments: {},
+      );
+      expect(listed['total'], 1);
+    });
+
+    // Engine-gap fixes round 2 (sbuilder Form Builder dogfood 2026-07-03/04)
+    test('form.get_document returns the full typed document JSON', () async {
+      final result = await handler.handleToolCall(
+        toolName: 'form.get_document',
+        arguments: {'documentId': 'doc-1'},
+      );
+      final doc = result['document'] as Map<String, dynamic>;
+      expect(doc['documentId'], 'doc-1');
+      expect(doc['sections'], isNotNull);
+    });
+
+    // Engine-gap fixes (sbuilder audit 2026-07-03)
+    test('form.template_schema (C1) exports a JSON Schema for the template',
+        () async {
+      final result = await handler.handleToolCall(
+        toolName: 'form.template_schema',
+        arguments: {'templateId': 'tpl-1'},
+      );
+      final schema = result['schema'] as Map<String, dynamic>;
+      expect(schema['type'], 'object');
+      expect(schema['properties'], isMap);
+      expect((schema['properties'] as Map).containsKey('name'), isTrue);
+    });
+
+    test('form.capacity (C2) reports per-field capacity', () async {
+      final result = await handler.handleToolCall(
+        toolName: 'form.capacity',
+        arguments: {'templateId': 'tpl-1'},
+      );
+      expect(result['capacities'], isMap);
+    });
+
+    test('standardRendererRegistry registers all five formats', () {
+      final reg = standardRendererRegistry();
+      for (final fmt in ['pdf', 'html', 'docx', 'markdown', 'uiDsl']) {
+        expect(reg.isFormatSupported(fmt), isTrue, reason: fmt);
+      }
+    });
+
+    test('empty RendererRegistry supports nothing (the ① defect)', () {
+      expect(RendererRegistry().isFormatSupported('pdf'), isFalse);
+    });
+
+    test('RenderOptions.fromJson maps the full 0.2.0 surface', () {
+      final o = RenderOptions.fromJson(<String, dynamic>{
+        'pageFlow': 'continuous',
+        'columnCount': 3,
+        'headerText': 'H',
+        'footerText': 'F',
+        'showPageNumbers': true,
+        'compress': false,
+        'fillableFields': true,
+        'pdfA': true,
+        'taggedPdf': true,
+        'watermarkOpacity': 0.3,
+      });
+      expect(o.pageFlow, PageFlow.continuous);
+      expect(o.columnCount, 3);
+      expect(o.headerText, 'H');
+      expect(o.footerText, 'F');
+      expect(o.showPageNumbers, isTrue);
+      expect(o.compress, isFalse);
+      expect(o.fillableFields, isTrue);
+      expect(o.pdfA, isTrue);
+      expect(o.taggedPdf, isTrue);
+      expect(o.watermarkOpacity, 0.3);
     });
 
     // TC-350: form.render
@@ -577,18 +826,25 @@ void main() {
     });
 
     // TC-378: toolDefinitions
-    test('toolDefinitions returns 7 tool definitions', () {
+    test('toolDefinitions returns 14 tool definitions', () {
       final definitions = handler.toolDefinitions;
-      expect(definitions, hasLength(7));
+      expect(definitions, hasLength(14));
 
       final names = definitions.map((d) => d.name).toSet();
       expect(names, containsAll([
         'form.list_templates',
+        'form.save_template',
+        'form.get_template',
+        'form.delete_template',
+        'form.get_template_versions',
+        'form.template_schema',
+        'form.capacity',
         'form.render',
         'form.validate',
         'form.patch',
         'form.export',
         'form.create_document',
+        'form.get_document',
         'form.get_status',
       ]));
     });
@@ -938,6 +1194,247 @@ void main() {
         message: 'Test message',
       );
       expect(error.toString(), 'McpToolError(TEST_CODE): Test message');
+    });
+  });
+
+  // --- Coverage for previously uncovered handler paths ---
+
+  group('form_tool_handler coverage', () {
+    late FormTemplatePortImpl templatePort;
+    late FormPortImpl formPort;
+    late FormRendererPortImpl rendererPort;
+    late FormToolHandler handler;
+
+    setUp(() async {
+      templatePort = FormTemplatePortImpl();
+      await templatePort.saveTemplate(template: _makeTemplate());
+      formPort = FormPortImpl(templatePort: templatePort);
+      await formPort.createDocument(
+        templateId: 'tpl-1',
+        initialData: {'name': 'Bob'},
+        documentId: 'doc-cov',
+      );
+      final registry = RendererRegistry();
+      registry.register(StubHtmlRenderer());
+      rendererPort = FormRendererPortImpl(
+        registry: registry,
+        templatePort: templatePort,
+      );
+      handler = FormToolHandler(
+        formPort: formPort,
+        templatePort: templatePort,
+        rendererPort: rendererPort,
+      );
+    });
+
+    // Line 367: save_template with non-Map template arg throws INVALID_PARAMS.
+    test('save_template throws INVALID_PARAMS when template is not a Map',
+        () async {
+      await expectLater(
+        handler.handleToolCall(
+          toolName: 'form.save_template',
+          arguments: {'template': 'not-a-map'},
+        ),
+        throwsA(
+          isA<McpToolError>()
+              .having((e) => e.code, 'code', 'INVALID_PARAMS'),
+        ),
+      );
+    });
+
+    // Lines 400-403: get_template failure via FailingTemplatePort.
+    test('get_template throws when templatePort fails', () async {
+      final failHandler = FormToolHandler(
+        formPort: formPort,
+        templatePort: FailingTemplatePort(),
+        rendererPort: rendererPort,
+      );
+      await expectLater(
+        failHandler.handleToolCall(
+          toolName: 'form.get_template',
+          arguments: {'templateId': 'no-such-tpl'},
+        ),
+        throwsA(isA<McpToolError>()),
+      );
+    });
+
+    // Lines 416-419: delete_template failure when port returns fail.
+    test('delete_template throws when deleteTemplate fails', () async {
+      final failHandler = FormToolHandler(
+        formPort: formPort,
+        templatePort: FailingDeleteTemplatePort(),
+        rendererPort: rendererPort,
+      );
+      await expectLater(
+        failHandler.handleToolCall(
+          toolName: 'form.delete_template',
+          arguments: {'templateId': 'tpl-1'},
+        ),
+        throwsA(isA<McpToolError>()),
+      );
+    });
+
+    // Lines 433-436: get_template_versions failure when port returns fail.
+    test('get_template_versions throws when port fails', () async {
+      final failHandler = FormToolHandler(
+        formPort: formPort,
+        templatePort: FailingVersionsTemplatePort(),
+        rendererPort: rendererPort,
+      );
+      await expectLater(
+        failHandler.handleToolCall(
+          toolName: 'form.get_template_versions',
+          arguments: {'templateId': 'tpl-1'},
+        ),
+        throwsA(isA<McpToolError>()),
+      );
+    });
+
+    // Line 447: get_template_versions with author and changeDescription fields.
+    test('get_template_versions includes author and changeDescription', () async {
+      final metaHandler = FormToolHandler(
+        formPort: formPort,
+        templatePort: VersionsWithMetaTemplatePort(),
+        rendererPort: rendererPort,
+      );
+      final result = await metaHandler.handleToolCall(
+        toolName: 'form.get_template_versions',
+        arguments: {'templateId': 'tpl-1'},
+      );
+      final versions = result['versions'] as List;
+      expect(versions, hasLength(1));
+      final v = versions.first as Map<String, dynamic>;
+      expect(v['author'], 'Alice');
+      expect(v['changeDescription'], 'Initial release');
+    });
+
+    // Lines 462-465: _requireTemplate failure (via capacity with bad templateId).
+    test('capacity throws when template not found via _requireTemplate', () async {
+      final failHandler = FormToolHandler(
+        formPort: formPort,
+        templatePort: FailingTemplatePort(),
+        rendererPort: rendererPort,
+      );
+      await expectLater(
+        failHandler.handleToolCall(
+          toolName: 'form.capacity',
+          arguments: {'templateId': 'no-such'},
+        ),
+        throwsA(isA<McpToolError>()),
+      );
+    });
+
+    // Lines 497-498, 503-507: capacity with fieldId and non-empty capacities.
+    // A template with a fixed-height FormFieldBlock produces non-empty capacities.
+    test('capacity with fieldId returns capacity for that specific field',
+        () async {
+      final templateWithField = FormTemplate(
+        templateId: 'tpl-field',
+        version: '1.0.0',
+        name: 'With Field',
+        schema: FormSchema(fields: [
+          FormSchemaField(name: 'notes', type: 'string'),
+        ]),
+        layoutPolicy: const FormLayoutPolicy(
+          pageSize: FormPageSize(size: 'A4', width: 210, height: 297),
+          margins: FormMargins(top: 20, right: 20, bottom: 20, left: 20),
+          fontPolicy: FormFontPolicy(
+            defaultFont: 'sans-serif',
+            defaultSize: 12,
+            headingSize: 18,
+            bodySize: 12,
+            minSize: 8,
+          ),
+        ),
+        defaultSections: [
+          FormSection(
+            sectionId: 's1',
+            index: 0,
+            blocks: [
+              // A fixed-height field block → estimateFieldCapacities returns entry.
+              FormFieldBlock(
+                blockId: 'notes-field',
+                index: 0,
+                fieldName: 'notes',
+                fieldType: 'text',
+                style: const {'height': 50}, // fixed height → included in capacity map
+              ),
+            ],
+          ),
+        ],
+      );
+      final fieldTemplatePort = FormTemplatePortImpl();
+      await fieldTemplatePort.saveTemplate(template: templateWithField);
+      final fieldFormPort = FormPortImpl(templatePort: fieldTemplatePort);
+      final registry = RendererRegistry();
+      registry.register(StubHtmlRenderer());
+      final fieldRendererPort = FormRendererPortImpl(
+        registry: registry,
+        templatePort: fieldTemplatePort,
+      );
+      final fieldHandler = FormToolHandler(
+        formPort: fieldFormPort,
+        templatePort: fieldTemplatePort,
+        rendererPort: fieldRendererPort,
+      );
+
+      // Request capacity for the specific 'notes' field.
+      final result = await fieldHandler.handleToolCall(
+        toolName: 'form.capacity',
+        arguments: {'templateId': 'tpl-field', 'fieldId': 'notes'},
+      );
+      final capacities = result['capacities'] as Map<String, dynamic>;
+      expect(capacities, contains('notes'));
+      final cap = capacities['notes'] as Map<String, dynamic>;
+      expect(cap['maxChars'], isA<int>());
+      expect(cap['lines'], isA<int>());
+      expect(cap['charsPerLine'], isA<int>());
+    });
+
+    // Lines 596-598: validate warnings callback includes warning issues.
+    test('validate returns warnings when validation issues have warning severity',
+        () async {
+      final doc = FormDocument(
+        documentId: 'doc-warn',
+        templateId: 'tpl-1',
+        templateVersion: '1.0.0',
+        metadata: FormDocumentMetadata(
+          author: 'tester',
+          createdAt: DateTime(2026),
+        ),
+      );
+      final warnHandler = FormToolHandler(
+        formPort: DocExistsWithWarningsFormPort(doc),
+        templatePort: templatePort,
+        rendererPort: rendererPort,
+      );
+      final result = await warnHandler.handleToolCall(
+        toolName: 'form.validate',
+        arguments: {'documentId': 'doc-warn'},
+      );
+      expect(result['isValid'], isTrue);
+      final warnings = result['warnings'] as List;
+      expect(warnings, hasLength(1));
+      final w = warnings.first as Map<String, dynamic>;
+      expect(w['code'], 'warn.field_empty');
+      expect(w['message'], contains('empty'));
+      expect(w['path'], '/data/notes');
+    });
+
+    // Lines 695-698: get_document failure throws McpToolError.
+    test('get_document throws when document not found', () async {
+      final failHandler = FormToolHandler(
+        formPort: FailingFormPort(),
+        templatePort: templatePort,
+        rendererPort: rendererPort,
+      );
+      await expectLater(
+        failHandler.handleToolCall(
+          toolName: 'form.get_document',
+          arguments: {'documentId': 'no-such-doc'},
+        ),
+        throwsA(isA<McpToolError>()),
+      );
     });
   });
 }

@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:mcp_bundle/mcp_bundle.dart';
 
+import '../../../core/document/document_numbering.dart';
+import '../../../style/style.dart';
 import '../render_context.dart';
 import '../renderer_registry.dart';
 
@@ -40,12 +42,28 @@ class UiDslRenderer implements DocumentRenderer {
     FormDocument document,
     RenderContext context,
   ) {
+    final numbering = DocumentNumbering.compute(document.sections);
+    final footnotes = FootnoteCollector();
+    final children = document.sections
+        .map((s) => _buildSection(s, document, numbering, footnotes))
+        .toList();
+    if (!footnotes.isEmpty) {
+      children.add({
+        'type': 'Footnotes',
+        'notes': [
+          for (var i = 0; i < footnotes.notes.length; i++)
+            {'number': i + 1, 'text': footnotes.notes[i]},
+        ],
+      });
+    }
+    final theme = context.styleSheet?.theme;
     return {
       'type': 'Scaffold',
       'metadata': {
         'documentId': document.documentId,
         'templateId': document.templateId,
         'status': document.status.name,
+        if (theme != null && theme.toMap().isNotEmpty) 'theme': theme.toMap(),
       },
       'body': {
         'type': 'ScrollView',
@@ -55,8 +73,7 @@ class UiDslRenderer implements DocumentRenderer {
           'bottom': context.layoutPolicy.margins.bottom,
           'left': context.layoutPolicy.margins.left,
         },
-        'children':
-            document.sections.map((s) => _buildSection(s, document)).toList(),
+        'children': children,
       },
     };
   }
@@ -64,31 +81,75 @@ class UiDslRenderer implements DocumentRenderer {
   Map<String, dynamic> _buildSection(
     FormSection section,
     FormDocument document,
+    DocumentNumbering numbering,
+    FootnoteCollector footnotes,
   ) {
     return {
       'type': 'Card',
       'id': section.sectionId,
       if (section.title != null) 'title': section.title,
-      'children':
-          section.blocks.map((b) => _buildBlock(b, document)).toList(),
+      'children': section.blocks
+          .map((b) => _buildBlock(b, document, numbering, footnotes))
+          .toList(),
     };
   }
 
-  Map<String, dynamic> _buildBlock(FormBlock block, FormDocument document) {
+  Map<String, dynamic> _buildBlock(
+    FormBlock block,
+    FormDocument document,
+    DocumentNumbering numbering,
+    FootnoteCollector footnotes,
+  ) {
     switch (block) {
       case FormTextBlock():
+        if (block.style?['math'] == true) {
+          return {
+            'type': 'Math',
+            'id': block.blockId,
+            'expression': block.content,
+            'display': true,
+            'mathml': mathToMathml(parseMath(block.content), display: true),
+          };
+        }
+        if (block.style?['toc'] == true) {
+          return {
+            'type': 'TableOfContents',
+            'id': block.blockId,
+            if (block.content.trim().isNotEmpty) 'title': block.content.trim(),
+            'entries': [
+              for (final e in numbering.tocEntries)
+                {
+                  'target': e.blockId,
+                  'level': e.level,
+                  'number': e.number,
+                  'text': e.text,
+                },
+            ],
+          };
+        }
+        final content = substituteInlineMath(
+            footnotes.consume(applyCrossRefs(block.content, numbering)));
         return {
           'type': 'Text',
           'id': block.blockId,
-          'content': block.content,
+          'content': content,
+          'runs': _runsJson(
+              FormRichText.parse(content, format: block.format)),
+          if (block.style != null) 'style': block.style,
         };
 
       case FormHeadingBlock():
+        final number = numbering.headingNumber(block.blockId);
+        final text = footnotes.consume(applyCrossRefs(block.content, numbering));
+        final content = number != null ? '$number $text' : text;
         return {
           'type': 'Heading',
           'id': block.blockId,
           'level': block.level,
-          'content': block.content,
+          'content': content,
+          if (number != null) 'number': number,
+          'runs': _runsJson(FormRichText.plain(content)),
+          if (block.style != null) 'style': block.style,
         };
 
       case FormTableBlock():
@@ -106,6 +167,8 @@ class UiDslRenderer implements DocumentRenderer {
               .toList(),
           'rows': block.rows.map((row) => row.cells).toList(),
           'headerRepeat': block.headerRepeat,
+          if (numbering.captionLabel(block.blockId) != null)
+            'caption': _captionText(block, numbering),
         };
 
       case FormChartBlock():
@@ -118,6 +181,8 @@ class UiDslRenderer implements DocumentRenderer {
           if (block.xAxis != null) 'xAxis': block.xAxis,
           if (block.yAxis != null) 'yAxis': block.yAxis,
           if (block.unit != null) 'unit': block.unit,
+          if (numbering.captionLabel(block.blockId) != null)
+            'caption': _captionText(block, numbering),
         };
 
       case FormImageBlock():
@@ -126,6 +191,13 @@ class UiDslRenderer implements DocumentRenderer {
           'id': block.blockId,
           'src': block.src,
           'alt': block.alt,
+          // Size + placement/alignment the template declared, so the runtime
+          // renders at the intended size instead of stretching to full width.
+          if (block.maxWidth != null) 'maxWidth': block.maxWidth,
+          if (block.aspectRatio != null) 'aspectRatio': block.aspectRatio,
+          if (block.style != null) 'style': block.style,
+          if (numbering.captionLabel(block.blockId) != null)
+            'caption': _captionText(block, numbering),
         };
 
       case FormCanvasBlock():
@@ -158,8 +230,9 @@ class UiDslRenderer implements DocumentRenderer {
         return {
           'type': 'RepeatingSection',
           'id': block.blockId,
-          'itemTemplate':
-              block.itemTemplate.map((b) => _buildBlock(b, document)).toList(),
+          'itemTemplate': block.itemTemplate
+              .map((b) => _buildBlock(b, document, numbering, footnotes))
+              .toList(),
           if (block.itemsBinding != null) 'itemsBinding': block.itemsBinding,
           'minItems': block.minItems,
           'maxItems': block.maxItems,
@@ -170,13 +243,31 @@ class UiDslRenderer implements DocumentRenderer {
           'type': 'Conditional',
           'id': block.blockId,
           'condition': block.condition,
-          'thenBlock': _buildBlock(block.thenBlock, document),
+          'thenBlock': _buildBlock(block.thenBlock, document, numbering, footnotes),
           if (block.elseBlock != null)
-            'elseBlock': _buildBlock(block.elseBlock!, document),
+            'elseBlock': _buildBlock(block.elseBlock!, document, numbering, footnotes),
         };
 
       default:
         return {'type': 'Unknown', 'id': block.blockId};
     }
+  }
+
+  /// The auto-numbered caption text ("Figure 1: ...") for a captioned block.
+  String _captionText(FormBlock block, DocumentNumbering numbering) {
+    final label = numbering.captionLabel(block.blockId)!;
+    final caption = block.style?['caption'] as String?;
+    return caption == null || caption.isEmpty ? label : '$label: $caption';
+  }
+
+  /// Serialise rich inline runs as `{text, ...marks}` objects for the runtime.
+  List<Map<String, dynamic>> _runsJson(FormRichText rich) {
+    return [
+      for (final run in rich.runs)
+        {
+          'text': run.text,
+          ...run.style.toMap(),
+        },
+    ];
   }
 }

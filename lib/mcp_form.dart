@@ -18,6 +18,7 @@ export 'src/core/template/version_validator.dart';
 // Core: Document factory and extensions (MOD-CORE-002)
 export 'src/core/document/document_extensions.dart';
 export 'src/core/document/document_factory.dart';
+export 'src/core/document/document_numbering.dart';
 export 'src/core/document/document_summary.dart';
 
 // Core: Validator (MOD-CORE-003)
@@ -30,6 +31,7 @@ export 'src/core/validator/schema_validator.dart';
 export 'src/core/binding/binding_engine.dart';
 export 'src/core/binding/binding_exceptions.dart';
 export 'src/core/binding/binding_resolver.dart';
+export 'src/core/binding/repeatable_binding.dart';
 
 // Core: Patch engine (MOD-CORE-005)
 export 'src/core/patch/conflict_detector.dart';
@@ -42,12 +44,22 @@ export 'src/core/workflow/transition_rule.dart';
 export 'src/core/workflow/version_history.dart';
 export 'src/core/workflow/workflow_engine.dart';
 
+// Core: Conditional evaluation + LLM-native schema export
+export 'src/core/condition/condition_evaluator.dart';
+export 'src/core/schema/capacity.dart';
+export 'src/core/schema/json_schema_export.dart';
+
+// Styling & copyfit (MOD-STYLE-001)
+export 'src/style/style.dart';
+
 // Infrastructure: Renderer (MOD-INFRA-001)
 export 'src/infra/renderer/layout_enforcer.dart';
 export 'src/infra/renderer/render_context.dart';
 export 'src/infra/renderer/renderer_registry.dart';
+export 'src/infra/renderer/standard_renderers.dart';
 export 'src/infra/renderer/renderers/docx_renderer.dart';
 export 'src/infra/renderer/renderers/html_renderer.dart';
+export 'src/infra/renderer/renderers/image_renderer.dart';
 export 'src/infra/renderer/renderers/markdown_renderer.dart';
 export 'src/infra/renderer/renderers/pdf_renderer.dart';
 export 'src/infra/renderer/renderers/ui_dsl_renderer.dart';

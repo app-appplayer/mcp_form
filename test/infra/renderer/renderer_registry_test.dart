@@ -26,6 +26,22 @@ class MockRenderer implements DocumentRenderer {
   }
 }
 
+/// Renderer that `extends` the interface without overriding
+/// `supportedTemplateRange`, to exercise its base default (`=> null`).
+class InheritDefaultRenderer extends DocumentRenderer {
+  @override
+  List<String> get supportedFormats => const ['inherit'];
+
+  @override
+  Future<FormRenderOutput> render(RenderContext context) async =>
+      FormRenderOutput(
+        format: 'inherit',
+        content: const <int>[],
+        pageCount: 1,
+        generatedAt: DateTime(2026),
+      );
+}
+
 /// Renderer that throws a FormError on render.
 class FormErrorRenderer implements DocumentRenderer {
   @override
@@ -91,6 +107,10 @@ FormDocument _makeDoc() {
 
 void main() {
   group('RendererRegistry', () {
+    test('DocumentRenderer.supportedTemplateRange defaults to null', () {
+      expect(InheritDefaultRenderer().supportedTemplateRange, isNull);
+    });
+
     // TC-283: Register renderer
     test('register makes format available', () {
       final registry = RendererRegistry();

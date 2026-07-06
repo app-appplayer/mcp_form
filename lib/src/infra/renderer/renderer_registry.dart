@@ -1,6 +1,8 @@
 import 'package:mcp_bundle/mcp_bundle.dart';
 
 import '../../core/template/version_compatibility.dart';
+import '../../style/style_sheet.dart';
+import '../../style/truetype_font.dart';
 import 'render_context.dart';
 
 /// Renderer interface for the registry.
@@ -25,7 +27,24 @@ abstract class DocumentRenderer {
 /// Manages format-to-renderer mappings and dispatches render
 /// requests to the appropriate renderer.
 class RendererRegistry {
+  /// Optional render-context defaults threaded into every [render] call.
+  ///
+  /// These are the host-injected pieces the tool path could not otherwise
+  /// reach: a global [styleSheet], the primary [embeddedFont] (multilingual
+  /// TrueType embedding), and [fallbackFonts] for glyph fallback. Font parsing
+  /// / loading stays the host's responsibility — the registry only carries the
+  /// already-built objects into the [RenderContext].
+  RendererRegistry({
+    this.styleSheet,
+    this.embeddedFont,
+    this.fallbackFonts = const <TrueTypeFont>[],
+  });
+
   final Map<String, DocumentRenderer> _renderers = {};
+
+  final FormStyleSheet? styleSheet;
+  final TrueTypeFont? embeddedFont;
+  final List<TrueTypeFont> fallbackFonts;
 
   /// Register a renderer for its supported formats.
   ///
@@ -101,6 +120,9 @@ class RendererRegistry {
       layoutPolicy: template.layoutPolicy,
       template: template,
       options: options,
+      styleSheet: styleSheet,
+      embeddedFont: embeddedFont,
+      fallbackFonts: fallbackFonts,
     );
 
     try {

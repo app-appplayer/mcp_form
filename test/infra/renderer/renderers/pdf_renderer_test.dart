@@ -60,6 +60,7 @@ RenderContext _ctx(
       includeMetadata: includeMetadata,
       applyWatermark: applyWatermark,
       watermarkText: watermarkText,
+      compress: false, // keep streams greppable in tests
     ),
   );
 }
@@ -77,6 +78,63 @@ void main() {
     test('output format is pdf', () async {
       final output = await _renderer.render(_ctx(_makeDoc()));
       expect(output.format, 'pdf');
+    });
+
+    test('style.pageBreak:before forces a new page (report structure)',
+        () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormTextBlock(blockId: 'cover', index: 0, content: 'Cover'),
+            FormTextBlock(
+              blockId: 'toc',
+              index: 1,
+              content: 'Contents',
+              style: const {'pageBreak': 'before'},
+            ),
+          ]),
+        ]),
+      ));
+      // Two blocks that would fit on one page are split by the break.
+      expect(output.pageCount, 2);
+    });
+
+    test('pageBorder option strokes a page frame', () async {
+      final output = await _renderer.render(RenderContext(
+        document: _makeDoc(),
+        layoutPolicy: _makeTemplate().layoutPolicy,
+        template: _makeTemplate(),
+        options: const RenderOptions(
+          pageBorder: true,
+          pageBorderWidth: 2,
+          compress: false,
+        ),
+      ));
+      final pdf = _renderToString(output);
+      // A rectangle stroke (`re S`) is emitted for the frame.
+      expect(pdf, contains('re S'));
+    });
+
+    test('style.placement text block renders (out of flow, absolute)',
+        () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormTextBlock(
+              blockId: 'co',
+              index: 0,
+              content: 'Makemind Inc.',
+              style: const {
+                'placement': {'anchor': 'bottom-center', 'y': 12}
+              },
+            ),
+          ]),
+        ]),
+      ));
+      final pdf = _renderToString(output);
+      // The placed text is emitted (as an absolute line), not dropped.
+      expect(pdf, contains('Makemind'));
+      expect(output.pageCount, 1);
     });
 
     test('output has file size', () async {
@@ -102,6 +160,69 @@ void main() {
       expect(pdf, contains('xref'));
       expect(pdf, contains('trailer'));
       expect(pdf, contains('startxref'));
+    });
+
+    // A 4x4 JPEG as a data URI.
+    const tinyJpeg =
+        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMC'
+        'AgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQ'
+        'Ew8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ'
+        'EBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAAEAAQDAREAAhEBAxEB/8QAFAABAAAA'
+        'AAAAAAAAAAAAAAAAB//EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAVAQEBAAAAAAAAAAAA'
+        'AAAAAAAFCP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AHggmd//2Q==';
+
+    test('embeds a JPEG data-URI image as a DCTDecode XObject', () async {
+      final doc = _makeDoc(sections: [
+        FormSection(sectionId: 's', index: 0, blocks: [
+          FormImageBlock(blockId: 'img', index: 0, src: tinyJpeg, alt: 'Logo'),
+        ]),
+      ]);
+      final out = await _renderer.render(_ctx(doc));
+      final pdf = latin1.decode(out.content as List<int>, allowInvalid: true);
+      expect(pdf, contains('/Subtype /Image'));
+      expect(pdf, contains('/Filter /DCTDecode'));
+      expect(pdf, contains('/Width 4'));
+      expect(pdf, contains('/XObject'));
+      expect(pdf, isNot(contains('[Image:')),
+          reason: 'embedded, not a placeholder');
+    });
+
+    // A 4x4 PNG as a data URI.
+    const tinyPng =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAEAQMAAACTPww9'
+        'AAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExU'
+        'RXuD/////+x/rmwAAAABYktHRAH/Ai3eAAAAB3RJTUUH6gYcFBIUl4UgwQAAAAtJREFU'
+        'CNdjYIAAAAAIAAEvIN0xAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI2LTA2LTI4VDIwOjE4'
+        'OjIwKzAwOjAwNYxkDQAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wNi0yOFQyMDoxODoy'
+        'MCswMDowMETR3LEAAAAodEVYdGRhdGU6dGltZXN0YW1wADIwMjYtMDYtMjhUMjA6MTg6'
+        'MjArMDA6MDATxP1uAAAAAElFTkSuQmCC';
+
+    test('embeds a PNG (decoded to raw RGB, not DCTDecode)', () async {
+      final doc = _makeDoc(sections: [
+        FormSection(sectionId: 's', index: 0, blocks: [
+          FormImageBlock(blockId: 'img', index: 0, src: tinyPng, alt: 'Logo'),
+        ]),
+      ]);
+      final out = await _renderer.render(_ctx(doc));
+      final pdf = latin1.decode(out.content as List<int>, allowInvalid: true);
+      expect(pdf, contains('/Subtype /Image'));
+      expect(pdf, contains('/Width 4'));
+      expect(pdf, contains('/XObject'));
+      expect(pdf, isNot(contains('DCTDecode')), reason: 'PNG → raw RGB');
+      expect(pdf, isNot(contains('[Image:')));
+    });
+
+    test('non-embeddable image src falls back to a placeholder', () async {
+      final doc = _makeDoc(sections: [
+        FormSection(sectionId: 's', index: 0, blocks: [
+          FormImageBlock(
+              blockId: 'img', index: 0, src: 'https://x/logo.png', alt: 'Logo'),
+        ]),
+      ]);
+      final out = await _renderer.render(_ctx(doc));
+      final pdf = latin1.decode(out.content as List<int>, allowInvalid: true);
+      expect(pdf, contains('[Image: Logo]'));
+      expect(pdf, isNot(contains('DCTDecode')));
     });
 
     test('uses document modifiedAt for generatedAt', () async {
@@ -237,7 +358,7 @@ void main() {
       expect(pdf, contains('[Image: Image]'));
     });
 
-    test('renders chart block as placeholder', () async {
+    test('renders bar chart as native vector graphics', () async {
       final output = await _renderer.render(_ctx(
         _makeDoc(sections: [
           FormSection(sectionId: 's1', index: 0, blocks: [
@@ -245,12 +366,47 @@ void main() {
               blockId: 'chart',
               index: 0,
               chartType: 'bar',
+              title: 'Sales',
+              data: const [
+                {
+                  'label': 'Q1',
+                  'points': [
+                    {'x': 'Jan', 'y': 10},
+                    {'x': 'Feb', 'y': 20},
+                  ],
+                },
+              ],
             ),
           ]),
         ]),
       ));
       final pdf = _renderToString(output);
-      expect(pdf, contains('[Chart: bar]'));
+      // Vector graphics, not a text placeholder.
+      expect(pdf, isNot(contains('[Chart: bar]')));
+      expect(pdf, contains('re f')); // filled bars
+      expect(pdf, contains('(Sales)')); // chart title
+      expect(pdf, contains('(Jan)')); // category label
+    });
+
+    test('renders pie chart wedges and slice labels', () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormChartBlock(
+              blockId: 'chart',
+              index: 0,
+              chartType: 'pie',
+              data: const [
+                {'label': 'A', 'value': 30},
+                {'label': 'B', 'value': 70},
+              ],
+            ),
+          ]),
+        ]),
+      ));
+      final pdf = _renderToString(output);
+      expect(pdf, contains('(A 30%)'));
+      expect(pdf, contains('(B 70%)'));
     });
 
     test('renders filled form field', () async {
@@ -313,7 +469,7 @@ void main() {
 
     test('renders conditional block thenBlock', () async {
       final output = await _renderer.render(_ctx(
-        _makeDoc(sections: [
+        _makeDoc(data: {'status': 'active'}, sections: [
           FormSection(sectionId: 's1', index: 0, blocks: [
             FormConditionalBlock(
               blockId: 'cond',
@@ -523,23 +679,16 @@ void main() {
         document: doc,
         layoutPolicy: smallTemplate.layoutPolicy,
         template: smallTemplate,
-        options: const RenderOptions(),
+        options: const RenderOptions(compress: false),
       );
 
       final output = await _renderer.render(ctx);
       expect(output.pageCount, greaterThan(1));
 
       final pdf = _renderToString(output);
-      // The header 'Name  |  Value' should appear more than once
-      // (once per page that contains table content)
-      final headerPattern = 'Name  |  Value';
-      final escapedHeader = headerPattern
-          .replaceAll(r'\', r'\\')
-          .replaceAll('(', r'\(')
-          .replaceAll(')', r'\)');
-      // Count occurrences of the header in the PDF text
-      final matches =
-          RegExp(RegExp.escape(escapedHeader)).allMatches(pdf).length;
+      // The grid renders each header cell as its own run; the 'Name' header
+      // cell should appear more than once (once per page of table content).
+      final matches = RegExp(r'\(Name\) Tj').allMatches(pdf).length;
       expect(
         matches,
         greaterThan(1),

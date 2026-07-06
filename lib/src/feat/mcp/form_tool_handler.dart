@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:mcp_bundle/mcp_bundle.dart';
 
+import '../../core/schema/capacity.dart';
+import '../../core/schema/json_schema_export.dart';
 import '../../core/workflow/workflow_engine.dart';
 import 'mcp_types.dart';
 
@@ -34,11 +36,19 @@ class FormToolHandler {
     try {
       return switch (toolName) {
         'form.list_templates' => await _handleListTemplates(arguments),
+        'form.save_template' => await _handleSaveTemplate(arguments),
+        'form.get_template' => await _handleGetTemplate(arguments),
+        'form.delete_template' => await _handleDeleteTemplate(arguments),
+        'form.get_template_versions' =>
+          await _handleGetTemplateVersions(arguments),
+        'form.template_schema' => await _handleTemplateSchema(arguments),
+        'form.capacity' => await _handleCapacity(arguments),
         'form.render' => await _handleRender(arguments),
         'form.validate' => await _handleValidate(arguments),
         'form.patch' => await _handlePatch(arguments),
         'form.export' => await _handleExport(arguments),
         'form.create_document' => await _handleCreateDocument(arguments),
+        'form.get_document' => await _handleGetDocument(arguments),
         'form.get_status' => await _handleGetStatus(arguments),
         _ => throw McpToolError(
               code: 'tool.not_found',
@@ -55,11 +65,18 @@ class FormToolHandler {
   /// List all registered tool definitions for MCP discovery.
   List<McpToolDefinition> get toolDefinitions => [
         _listTemplatesDefinition,
+        _saveTemplateDefinition,
+        _getTemplateDefinition,
+        _deleteTemplateDefinition,
+        _getTemplateVersionsDefinition,
+        _templateSchemaDefinition,
+        _capacityDefinition,
         _renderDefinition,
         _validateDefinition,
         _patchDefinition,
         _exportDefinition,
         _createDocumentDefinition,
+        _getDocumentDefinition,
         _getStatusDefinition,
       ];
 
@@ -86,6 +103,102 @@ class FormToolHandler {
     },
   );
 
+  static const _saveTemplateDefinition = McpToolDefinition(
+    name: 'form.save_template',
+    description:
+        'Create or update a form template. Rejects a duplicate '
+        'templateId+version; a new version of an existing templateId appends '
+        'to its version history.',
+    inputSchema: {
+      'type': 'object',
+      'required': ['template'],
+      'properties': {
+        'template': {
+          'type': 'object',
+          'description': 'Full FormTemplate JSON (FormTemplate.toJson shape)',
+        },
+      },
+    },
+  );
+
+  static const _getTemplateDefinition = McpToolDefinition(
+    name: 'form.get_template',
+    description:
+        'Get a form template by id, optionally a specific version '
+        '(defaults to the current version).',
+    inputSchema: {
+      'type': 'object',
+      'required': ['templateId'],
+      'properties': {
+        'templateId': {'type': 'string'},
+        'version': {'type': 'string'},
+      },
+    },
+  );
+
+  static const _deleteTemplateDefinition = McpToolDefinition(
+    name: 'form.delete_template',
+    description: 'Delete a form template (and its version history) by id.',
+    inputSchema: {
+      'type': 'object',
+      'required': ['templateId'],
+      'properties': {
+        'templateId': {'type': 'string'},
+      },
+    },
+  );
+
+  static const _getTemplateVersionsDefinition = McpToolDefinition(
+    name: 'form.get_template_versions',
+    description:
+        'List the version history of a form template, newest entries as '
+        'they were saved (for template history / audit).',
+    inputSchema: {
+      'type': 'object',
+      'required': ['templateId'],
+      'properties': {
+        'templateId': {'type': 'string'},
+      },
+    },
+  );
+
+  static const _templateSchemaDefinition = McpToolDefinition(
+    name: 'form.template_schema',
+    description:
+        'Export a template as a JSON Schema (draft 2020-12) so an external '
+        'LLM fills content constrained to the template — structure cannot be '
+        'broken. With capacity feed-forward on (default), fixed-size fields '
+        'carry a `maxLength` so the model writes to fit.',
+    inputSchema: {
+      'type': 'object',
+      'required': ['templateId'],
+      'properties': {
+        'templateId': {'type': 'string'},
+        'version': {'type': 'string'},
+        'withCapacity': {'type': 'boolean', 'default': true},
+      },
+    },
+  );
+
+  static const _capacityDefinition = McpToolDefinition(
+    name: 'form.capacity',
+    description:
+        'Report per-field text capacity for a template (chars/lines a fixed '
+        'box holds) — the copy-fit feed-forward, before generation.',
+    inputSchema: {
+      'type': 'object',
+      'required': ['templateId'],
+      'properties': {
+        'templateId': {'type': 'string'},
+        'version': {'type': 'string'},
+        'fieldId': {
+          'type': 'string',
+          'description': 'Optional — restrict the report to a single field',
+        },
+      },
+    },
+  );
+
   static const _renderDefinition = McpToolDefinition(
     name: 'form.render',
     description:
@@ -98,7 +211,7 @@ class FormToolHandler {
         'documentId': {'type': 'string'},
         'format': {
           'type': 'string',
-          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl'],
+          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image'],
         },
         'options': {
           'type': 'object',
@@ -163,7 +276,7 @@ class FormToolHandler {
         'documentId': {'type': 'string'},
         'format': {
           'type': 'string',
-          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl'],
+          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image'],
         },
       },
     },
@@ -179,6 +292,22 @@ class FormToolHandler {
       'properties': {
         'templateId': {'type': 'string'},
         'data': {'type': 'object'},
+      },
+    },
+  );
+
+  static const _getDocumentDefinition = McpToolDefinition(
+    name: 'form.get_document',
+    description:
+        'Return the full document as typed JSON (FormDocument.toJson, '
+        'including applied patches) — the canonical form for freezing a '
+        'publication snapshot or re-rendering, without going through a render '
+        'format.',
+    inputSchema: {
+      'type': 'object',
+      'required': ['documentId'],
+      'properties': {
+        'documentId': {'type': 'string'},
       },
     },
   );
@@ -227,6 +356,155 @@ class FormToolHandler {
               })
           .toList(),
       'total': templates.length,
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleSaveTemplate(
+    Map<String, dynamic> arguments,
+  ) async {
+    final templateJson = arguments['template'];
+    if (templateJson is! Map<String, dynamic>) {
+      throw McpToolError(
+        code: 'INVALID_PARAMS',
+        message: '`template` (object) is required',
+      );
+    }
+    final template = FormTemplate.fromJson(templateJson);
+    final result = await _templatePort.saveTemplate(template: template);
+    if (!result.success || result.data == null) {
+      throw FormError(
+        code: result.error?.code ?? 'template.save_failed',
+        message: result.error?.message ?? 'Failed to save template',
+        path: result.error?.path,
+      );
+    }
+    final t = result.data!;
+    return {
+      'templateId': t.templateId,
+      'version': t.version,
+      'name': t.name,
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleGetTemplate(
+    Map<String, dynamic> arguments,
+  ) async {
+    final templateId = arguments['templateId'] as String;
+    final version = arguments['version'] as String?;
+
+    final result = await _templatePort.getTemplate(
+      templateId: templateId,
+      version: version,
+    );
+    if (!result.success || result.data == null) {
+      throw FormError(
+        code: result.error?.code ?? 'template.not_found',
+        message: result.error?.message ?? 'Template not found: $templateId',
+        path: result.error?.path,
+      );
+    }
+    return {'template': result.data!.toJson()};
+  }
+
+  Future<Map<String, dynamic>> _handleDeleteTemplate(
+    Map<String, dynamic> arguments,
+  ) async {
+    final templateId = arguments['templateId'] as String;
+
+    final result = await _templatePort.deleteTemplate(templateId: templateId);
+    if (!result.success) {
+      throw FormError(
+        code: result.error?.code ?? 'template.delete_failed',
+        message: result.error?.message ?? 'Failed to delete template',
+        path: result.error?.path,
+      );
+    }
+    return {'templateId': templateId, 'deleted': true};
+  }
+
+  Future<Map<String, dynamic>> _handleGetTemplateVersions(
+    Map<String, dynamic> arguments,
+  ) async {
+    final templateId = arguments['templateId'] as String;
+
+    final result =
+        await _templatePort.getTemplateVersions(templateId: templateId);
+    if (!result.success || result.data == null) {
+      throw FormError(
+        code: result.error?.code ?? 'template.not_found',
+        message: result.error?.message ?? 'Template not found: $templateId',
+        path: result.error?.path,
+      );
+    }
+    return {
+      'templateId': templateId,
+      'versions': result.data!
+          .map((v) => {
+                'version': v.version,
+                'createdAt': v.createdAt.toIso8601String(),
+                if (v.author != null) 'author': v.author,
+                if (v.changeDescription != null)
+                  'changeDescription': v.changeDescription,
+              })
+          .toList(),
+    };
+  }
+
+  Future<FormTemplate> _requireTemplate(
+    String templateId,
+    String? version,
+  ) async {
+    final result = await _templatePort.getTemplate(
+      templateId: templateId,
+      version: version,
+    );
+    if (!result.success || result.data == null) {
+      throw FormError(
+        code: result.error?.code ?? 'template.not_found',
+        message: result.error?.message ?? 'Template not found: $templateId',
+        path: result.error?.path,
+      );
+    }
+    return result.data!;
+  }
+
+  Future<Map<String, dynamic>> _handleTemplateSchema(
+    Map<String, dynamic> arguments,
+  ) async {
+    final template = await _requireTemplate(
+      arguments['templateId'] as String,
+      arguments['version'] as String?,
+    );
+    final withCapacity = arguments['withCapacity'] as bool? ?? true;
+    return {
+      'templateId': template.templateId,
+      'version': template.version,
+      'schema': templateToJsonSchema(template, withCapacity: withCapacity),
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleCapacity(
+    Map<String, dynamic> arguments,
+  ) async {
+    final template = await _requireTemplate(
+      arguments['templateId'] as String,
+      arguments['version'] as String?,
+    );
+    final fieldId = arguments['fieldId'] as String?;
+    final all = estimateFieldCapacities(template);
+    final selected = fieldId == null
+        ? all
+        : {
+            if (all.containsKey(fieldId)) fieldId: all[fieldId]!,
+          };
+    return {
+      'templateId': template.templateId,
+      'version': template.version,
+      'capacities': selected.map((k, c) => MapEntry(k, {
+            'maxChars': c.maxChars,
+            'lines': c.lines,
+            'charsPerLine': c.charsPerLine,
+          })),
     };
   }
 
@@ -406,6 +684,21 @@ class FormToolHandler {
       'version': doc.version,
       'createdAt': doc.metadata.createdAt.toIso8601String(),
     };
+  }
+
+  Future<Map<String, dynamic>> _handleGetDocument(
+    Map<String, dynamic> arguments,
+  ) async {
+    final documentId = arguments['documentId'] as String;
+    final docResult = await _formPort.getDocument(documentId: documentId);
+    if (!docResult.success || docResult.data == null) {
+      throw FormError(
+        code: docResult.error?.code ?? 'document.not_found',
+        message: docResult.error?.message ?? 'Document not found: $documentId',
+        path: docResult.error?.path,
+      );
+    }
+    return {'document': docResult.data!.toJson()};
   }
 
   Future<Map<String, dynamic>> _handleGetStatus(

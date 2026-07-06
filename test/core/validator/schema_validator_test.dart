@@ -400,7 +400,7 @@ void main() {
         FormSchemaField(name: 'items', type: 'array', required: true),
       ]);
       final issues = validator.validate(
-        document: _makeDoc({'items': []}),
+        document: _makeDoc({'items': <dynamic>[]}),
         schema: schema,
       );
       expect(issues.length, 1);
@@ -413,7 +413,7 @@ void main() {
         FormSchemaField(name: 'config', type: 'object', required: true),
       ]);
       final issues = validator.validate(
-        document: _makeDoc({'config': {}}),
+        document: _makeDoc({'config': <String, dynamic>{}}),
         schema: schema,
       );
       expect(issues.length, 1);

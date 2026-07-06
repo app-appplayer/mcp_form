@@ -406,7 +406,7 @@ void main() {
 
     test('renders conditional block thenBlock', () async {
       final output = await _renderer.render(_ctx(
-        _makeDoc(sections: [
+        _makeDoc(data: {'status': 'active'}, sections: [
           FormSection(sectionId: 's1', index: 0, blocks: [
             FormConditionalBlock(
               blockId: 'cond',

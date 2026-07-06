@@ -75,10 +75,6 @@ class FormRendererPortImpl implements FormRendererPort {
 
   RenderOptions _parseOptions(Map<String, dynamic>? options) {
     if (options == null) return const RenderOptions();
-    return RenderOptions(
-      includeMetadata: options['includeMetadata'] as bool? ?? false,
-      applyWatermark: options['applyWatermark'] as bool? ?? false,
-      watermarkText: options['watermarkText'] as String?,
-    );
+    return RenderOptions.fromJson(options);
   }
 }

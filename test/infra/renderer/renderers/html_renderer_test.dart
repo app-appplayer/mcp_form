@@ -74,6 +74,109 @@ void main() {
       expect(_renderer.supportedFormats, contains('html'));
     });
 
+    test('style.placement image is absolute-positioned, out of flow', () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormImageBlock(
+              blockId: 'seal',
+              index: 0,
+              src: 'stamp.png',
+              alt: 'seal',
+              maxWidth: 80,
+              style: const {
+                'placement': {
+                  'anchor': 'bottom-left',
+                  'x': 10,
+                  'y': 15,
+                }
+              },
+            ),
+          ]),
+        ]),
+      ));
+      final html = _renderToString(output);
+      expect(html, contains('position: absolute'));
+      expect(html, contains('bottom: 15'));
+      expect(html, contains('left: 10'));
+      // The positioned page box (relative + min-height) anchors bottom to the
+      // paper, not the content height (defect 1).
+      expect(html, contains('position: relative'));
+      expect(html, contains('min-height:'));
+    });
+
+    test('non-image placement (text block) is also pulled out and absolute',
+        () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormTextBlock(
+              blockId: 'co',
+              index: 0,
+              content: 'Makemind Inc.',
+              style: const {
+                'placement': {'anchor': 'bottom-center', 'y': 12}
+              },
+            ),
+          ]),
+        ]),
+      ));
+      final html = _renderToString(output);
+      // Company name is absolute-positioned (bottom-center), not in flow.
+      expect(html, contains('position: absolute'));
+      expect(html, contains('translateX(-50%)'));
+      expect(html, contains('Makemind Inc.'));
+    });
+
+    test('background image: z-back + full-bleed + object-fit cover', () async {
+      final output = await _renderer.render(_ctx(
+        _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormImageBlock(
+              blockId: 'bg',
+              index: 0,
+              src: 'hero.jpg',
+              style: const {
+                'placement': {
+                  'anchor': 'top-left',
+                  'x': 0,
+                  'y': 0,
+                  'width': 'full',
+                  'height': 'full',
+                  'z': 'back',
+                  'fit': 'cover',
+                }
+              },
+            ),
+          ]),
+        ]),
+      ));
+      final html = _renderToString(output);
+      expect(html, contains('z-index: -1'));
+      expect(html, contains('object-fit: cover'));
+      expect(html, contains('width: 100%'));
+    });
+
+    test('pageBorder option draws a page frame (border on the page box)',
+        () async {
+      final output = await _renderer.render(RenderContext(
+        document: _makeDoc(sections: [
+          FormSection(sectionId: 's1', index: 0, blocks: [
+            FormTextBlock(blockId: 't', index: 0, content: 'x'),
+          ]),
+        ]),
+        layoutPolicy: _makeTemplate().layoutPolicy,
+        template: _makeTemplate(),
+        options: const RenderOptions(
+          pageBorder: true,
+          pageBorderColor: '#333333',
+          pageBorderWidth: 2,
+        ),
+      ));
+      final html = _renderToString(output);
+      expect(html, contains('border: 2'));
+    });
+
     test('renders valid HTML5 document', () async {
       final output = await _renderer.render(_ctx(
         _makeDoc(sections: [
@@ -134,7 +237,9 @@ void main() {
         ]),
       ));
       final html = _renderToString(output);
-      expect(html, contains('<h3>Title</h3>'));
+      // Headings carry an id anchor (for TOC links) and may be auto-numbered;
+      // an unnumbered heading renders its text verbatim.
+      expect(html, contains('<h3 id="h">Title</h3>'));
     });
 
     test('clamps heading level to 1-6', () async {
@@ -151,7 +256,7 @@ void main() {
         ]),
       ));
       final html = _renderToString(output);
-      expect(html, contains('<h1>Low</h1>'));
+      expect(html, contains('<h1 id="h">Low</h1>'));
     });
 
     // TableBlock
@@ -224,7 +329,7 @@ void main() {
     });
 
     // ChartBlock
-    test('renders chart as div with data-type', () async {
+    test('renders chart as inline SVG with data-type', () async {
       final output = await _renderer.render(_ctx(
         _makeDoc(sections: [
           FormSection(sectionId: 's1', index: 0, blocks: [
@@ -232,6 +337,16 @@ void main() {
               blockId: 'chart',
               index: 0,
               chartType: 'bar',
+              title: 'Sales',
+              data: const [
+                {
+                  'label': 'Q1',
+                  'points': [
+                    {'x': 'Jan', 'y': 10},
+                    {'x': 'Feb', 'y': 20},
+                  ],
+                },
+              ],
             ),
           ]),
         ]),
@@ -239,7 +354,11 @@ void main() {
       final html = _renderToString(output);
       expect(html, contains('class="chart"'));
       expect(html, contains('data-type="bar"'));
-      expect(html, contains('<strong>Chart</strong> (bar)'));
+      // Native SVG output, not a text placeholder.
+      expect(html, contains('<svg'));
+      expect(html, contains('<rect ')); // bars
+      expect(html, contains('>Jan</text>')); // category label
+      expect(html, isNot(contains('<strong>Chart</strong>')));
     });
 
     // FormFieldBlock
@@ -304,9 +423,9 @@ void main() {
     });
 
     // ConditionalBlock
-    test('renders thenBlock by default', () async {
+    test('renders thenBlock when the condition holds', () async {
       final output = await _renderer.render(_ctx(
-        _makeDoc(sections: [
+        _makeDoc(data: {'score': 85}, sections: [
           FormSection(sectionId: 's1', index: 0, blocks: [
             FormConditionalBlock(
               blockId: 'cond',
@@ -403,6 +522,62 @@ void main() {
       expect(html, contains('<style>'));
       expect(html, contains('font-family'));
       expect(html, contains('border-collapse'));
+    });
+
+    test('page break, placement anchors and page border with radius', () async {
+      final doc = _makeDoc(sections: [
+        FormSection(sectionId: 's', index: 0, blocks: [
+          FormTextBlock(blockId: 'a', index: 0, content: 'cover'),
+          FormTextBlock(
+              blockId: 'b',
+              index: 1,
+              content: 'body',
+              style: const {'pageBreak': 'before'}),
+          FormTextBlock(
+              blockId: 'tc',
+              index: 2,
+              content: 'top center',
+              style: const {
+                'placement': {'anchor': 'top-center', 'y': 5}
+              }),
+          FormTextBlock(
+              blockId: 'bc',
+              index: 3,
+              content: 'bottom center',
+              style: const {
+                'placement': {'anchor': 'bottom-center', 'y': 5}
+              }),
+          FormTextBlock(
+              blockId: 'ce',
+              index: 4,
+              content: 'center',
+              style: const {
+                'placement': {'anchor': 'center'}
+              }),
+          FormTextBlock(
+              blockId: 'br',
+              index: 5,
+              content: 'stamp',
+              style: const {
+                'placement': {'anchor': 'bottom-right', 'x': 5, 'y': 5}
+              }),
+        ]),
+      ]);
+      final out = await _renderer.render(RenderContext(
+        document: doc,
+        layoutPolicy: _makeTemplate().layoutPolicy,
+        template: _makeTemplate(),
+        options: const RenderOptions(
+          pageBorder: true,
+          pageBorderWidth: 2,
+          pageBorderRadius: 8,
+        ),
+      ));
+      final html = _renderToString(out);
+      expect(html, contains('break-before: page'));
+      expect(html, contains('border-radius: 8'));
+      expect(html, contains('translateX(-50%)')); // top/bottom-center
+      expect(html, contains('translate(-50%, -50%)')); // center
     });
   });
 }

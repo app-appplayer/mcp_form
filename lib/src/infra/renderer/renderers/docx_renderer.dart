@@ -2,7 +2,11 @@ import 'dart:convert';
 
 import 'package:mcp_bundle/mcp_bundle.dart';
 
+import '../../../core/binding/repeatable_binding.dart';
+import '../../../core/condition/condition_evaluator.dart';
+import '../../../core/document/document_numbering.dart';
 import '../../../core/template/layout_extensions.dart';
+import '../../../style/style.dart';
 import '../render_context.dart';
 import '../renderer_registry.dart';
 
@@ -33,6 +37,8 @@ class DocxRenderer implements DocumentRenderer {
   @override
   Future<FormRenderOutput> render(RenderContext context) async {
     final doc = context.document;
+    final numbering = DocumentNumbering.compute(doc.sections);
+    final footnotes = FootnoteCollector();
     final layout = context.layoutPolicy;
     final buf = StringBuffer();
 
@@ -54,17 +60,34 @@ class DocxRenderer implements DocumentRenderer {
     _writeFontTable(buf, layout);
 
     // Style definitions
-    _writeStyles(buf, layout);
+    _writeStyles(buf, layout,
+        baseFontSize: context.styleSheet?.theme.baseFontSize);
 
     // Document body
     buf.writeln('<w:body>');
+
+    // Letterhead logo from the theme (placeholder reference — Flat OPC cannot
+    // embed image bytes inline).
+    final logo = context.styleSheet?.theme.logo;
+    if (logo != null && logo.isNotEmpty) {
+      _writeParagraph(buf, '[Logo: ${_escapeXml(logo)}]', italic: true);
+    }
 
     for (final section in doc.sections) {
       if (section.title != null) {
         _writeParagraph(buf, _escapeXml(section.title!), headingLevel: 2);
       }
       for (final block in section.blocks) {
-        _renderBlock(buf, block, doc.data, layout);
+        _renderBlock(buf, block, doc.data, layout, numbering, footnotes);
+      }
+    }
+
+    // Endnotes: the collected footnotes as a numbered "Notes" section.
+    if (!footnotes.isEmpty) {
+      _writeParagraph(buf, 'Notes', headingLevel: 2);
+      final notes = footnotes.notes;
+      for (var i = 0; i < notes.length; i++) {
+        _writeParagraph(buf, _escapeXml('${i + 1}. ${notes[i]}'));
       }
     }
 
@@ -147,9 +170,11 @@ class DocxRenderer implements DocumentRenderer {
   // Styles
   // ==========================================================================
 
-  void _writeStyles(StringBuffer buf, FormLayoutPolicy layout) {
+  void _writeStyles(StringBuffer buf, FormLayoutPolicy layout,
+      {double? baseFontSize}) {
     final fontPolicy = layout.fontPolicy;
-    final bodySizeHp = (fontPolicy.bodySize * _halfPointsPerPt).round();
+    final bodySizeHp =
+        ((baseFontSize ?? fontPolicy.bodySize) * _halfPointsPerPt).round();
 
     buf.writeln('<w:styles>');
 
@@ -221,7 +246,11 @@ class DocxRenderer implements DocumentRenderer {
       ' w:bottom="$marginBottom" w:left="$marginLeft"'
       ' w:header="720" w:footer="720"/>',
     );
-    buf.writeln('  <w:cols w:num="${layout.gridColumns}"/>');
+    // Single-column page flow. `gridColumns` is a design grid (Bootstrap-style,
+    // default 12) for block placement — not a count of newspaper text columns,
+    // so it must not be mapped onto `w:cols` (that would split the page into 12
+    // narrow columns).
+    buf.writeln('  <w:cols w:space="708"/>');
     buf.writeln('</w:sectPr>');
   }
 
@@ -234,23 +263,57 @@ class DocxRenderer implements DocumentRenderer {
     FormBlock block,
     Map<String, dynamic> data,
     FormLayoutPolicy layout,
+    DocumentNumbering numbering,
+    FootnoteCollector footnotes,
   ) {
     switch (block) {
       case FormTextBlock():
-        _writeParagraph(buf, _escapeXml(block.content));
+        if (block.style?['math'] == true) {
+          // OMML (Office Math) is out of scope; emit the source as a centred
+          // monospace-ish paragraph so the equation is at least legible.
+          _writeParagraph(buf, _escapeXml(block.content), italic: true);
+          break;
+        }
+        if (block.style?['toc'] == true) {
+          final title = block.content.trim();
+          if (title.isNotEmpty) {
+            _writeParagraph(buf, _escapeXml(title), bold: true);
+          }
+          for (final e in numbering.tocEntries) {
+            final prefix = e.number.isEmpty ? '' : '${e.number}  ';
+            final indent = '  ' * (e.level - 1);
+            _writeParagraph(buf, _escapeXml('$indent$prefix${e.text}'));
+          }
+          break;
+        }
+        final deco = redlineDecoration(block.style?['change'] as String?);
+        _writeParagraph(
+          buf,
+          _escapeXml(substituteInlineMath(
+              footnotes.consume(applyCrossRefs(block.content, numbering)))),
+          strike: deco?.strike ?? false,
+          underline: deco?.underline ?? false,
+          color: deco?.color.replaceFirst('#', ''),
+        );
 
       case FormHeadingBlock():
         final level = block.level.clamp(1, 6);
-        _writeParagraph(buf, _escapeXml(block.content), headingLevel: level);
+        final number = numbering.headingNumber(block.blockId);
+        final text = footnotes.consume(applyCrossRefs(block.content, numbering));
+        final body = number != null ? '$number $text' : text;
+        _writeParagraph(buf, _escapeXml(body), headingLevel: level);
 
       case FormTableBlock():
         _renderTable(buf, block, layout);
+        _writeCaption(buf, block, numbering);
 
       case FormImageBlock():
         _renderImage(buf, block);
+        _writeCaption(buf, block, numbering);
 
       case FormChartBlock():
         _renderChart(buf, block);
+        _writeCaption(buf, block, numbering);
 
       case FormCanvasBlock():
         _renderCanvas(buf, block);
@@ -259,17 +322,37 @@ class DocxRenderer implements DocumentRenderer {
         _renderField(buf, block, data);
 
       case FormRepeatableBlock():
-        for (final tplBlock in block.itemTemplate) {
-          _renderBlock(buf, tplBlock, data, layout);
+        for (final item in resolveRepeatableItems(block, data)) {
+          for (final tplBlock in block.itemTemplate) {
+            _renderBlock(buf, tplBlock, item, layout, numbering, footnotes);
+          }
         }
 
       case FormConditionalBlock():
-        // Render thenBlock by default (condition evaluation is external)
-        _renderBlock(buf, block.thenBlock, data, layout);
+        if (evaluateCondition(block.condition, data)) {
+          _renderBlock(buf, block.thenBlock, data, layout, numbering, footnotes);
+        } else if (block.elseBlock != null) {
+          _renderBlock(buf, block.elseBlock!, data, layout, numbering, footnotes);
+        }
 
       default:
         break;
     }
+  }
+
+  /// Emit an auto-numbered caption paragraph ("Figure 1: ...") under a figure /
+  /// table when the block carries a caption; no-op otherwise.
+  void _writeCaption(
+    StringBuffer buf,
+    FormBlock block,
+    DocumentNumbering numbering,
+  ) {
+    final label = numbering.captionLabel(block.blockId);
+    if (label == null) return;
+    final caption = block.style?['caption'] as String?;
+    final text =
+        caption == null || caption.isEmpty ? label : '$label: $caption';
+    _writeParagraph(buf, _escapeXml(text), italic: true);
   }
 
   // ==========================================================================
@@ -283,6 +366,8 @@ class DocxRenderer implements DocumentRenderer {
     int? headingLevel,
     bool bold = false,
     bool italic = false,
+    bool strike = false,
+    bool underline = false,
     String? color,
   }) {
     buf.writeln('<w:p>');
@@ -294,10 +379,12 @@ class DocxRenderer implements DocumentRenderer {
     }
 
     buf.writeln('  <w:r>');
-    if (bold || italic || color != null) {
+    if (bold || italic || strike || underline || color != null) {
       buf.writeln('    <w:rPr>');
       if (bold) buf.writeln('      <w:b/>');
       if (italic) buf.writeln('      <w:i/>');
+      if (strike) buf.writeln('      <w:strike/>');
+      if (underline) buf.writeln('      <w:u w:val="single"/>');
       if (color != null) buf.writeln('      <w:color w:val="$color"/>');
       buf.writeln('    </w:rPr>');
     }

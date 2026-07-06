@@ -1,14 +1,17 @@
 # MCP Form
 
-Form document creation, validation, rendering, and management for the MCP ecosystem. Implements the `FormPort` / `FormRendererPort` / `FormTemplatePort` Contract Layer defined in `mcp_bundle`.
+Schema-based document generation for the MCP ecosystem: fixed templates filled with content produce consistently structured documents (résumés, reports, invoices, business cards, contracts). Implements the `FormPort` / `FormRendererPort` / `FormTemplatePort` Contract Layer defined in `mcp_bundle`.
 
 ## Components
 
-- **Template** — field types, layout extensions, schema validator, defaults, summary, version compatibility / validator.
-- **Document** — factory, extensions, summary.
-- **Validator** — form / layout / schema validators with autofix engine.
-- **Binding** — runtime data binding engine connecting templates to documents.
-- **Standard port adapters** — implementations of `mcp_bundle` form Contract Layer.
+- **Template** — field types, schema, layout policy, versioning, ecosystem / bundling.
+- **Document** — object model, block types, sections, snapshots, lifecycle.
+- **Validator** — form / layout / schema validators with an autofix engine.
+- **Binding** — runtime data binding connecting templates to documents.
+- **Rendering** — six output formats: PDF, HTML, DOCX, Markdown, UI DSL, and a pure-Dart PNG image. Rich styling & copy-fit, tables, charts, math, barcodes / QR, absolute placement & backgrounds, page frame / page breaks, and multilingual TrueType embedding.
+- **LLM-native** — export a template as a JSON Schema so an LLM fills within its structure; per-field capacity feed-forward.
+- **MCP tools** — the `form.*` tool surface (template management, filling, document lifecycle, rendering).
+- **Standard port adapters** — implementations of the `mcp_bundle` form Contract Layer.
 
 ## Quick Start
 
