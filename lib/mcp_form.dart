@@ -70,6 +70,8 @@ export 'src/adapters/form_renderer_port_impl.dart';
 export 'src/adapters/form_template_port_impl.dart';
 
 // Feature: MCP tools (MOD-FEAT-001)
+export 'src/feat/mcp/argument_validator.dart';
 export 'src/feat/mcp/form_resource_handler.dart';
+export 'src/feat/mcp/form_template_json_schema.dart';
 export 'src/feat/mcp/form_tool_handler.dart';
 export 'src/feat/mcp/mcp_types.dart';

@@ -1,3 +1,35 @@
+## [0.2.2] - 2026-09-27
+
+### Fixed — 0.2.1 refused calls 0.2.0 served
+- The argument check enforced `enum`, `minimum` and `maximum` from the tool
+  schemas, which the handlers had never enforced: `form.render` / `form.export`
+  refused `format: 'png'` (served by the image renderer) and any format a host
+  registered itself, and `form.list_templates` refused a `limit` above 100 or
+  below 1 and a negative `offset`. The check now enforces only the shape
+  (`type`, `required`, the template structure); those keywords describe the
+  usual values and the ports decide the rest, as in 0.2.0. `png` is listed in
+  the `format` descriptions.
+- `validateArgument`, `ArgumentIssue`, `formTemplateJsonSchema`,
+  `formTemplateObjectSchema` and `formTemplateSchemaDefs` are exported from
+  `package:mcp_form/mcp_form.dart`; 0.2.1 announced them without exporting
+  them. `validateArgument` takes `checkConstraints` (default `true`) for
+  callers that do want `enum` and ranges enforced.
+
+### Changed — dependency floors at the latest that resolve together
+- `mcp_bundle ^0.4.10` (was `^0.4.0`), `collection ^1.19.1`, `meta ^1.18.0`
+  (the version the Flutter SDK pins — 1.19 would not resolve for Flutter
+  consumers), `image ^4.3.0` (4.9 and later need `archive` 4, while
+  `mcp_bundle` is on `archive` 3).
+
+### Note — what 0.2.1 changed for callers
+0.2.1 was published as a patch but changed what some calls return:
+- A malformed argument answers `McpToolError` `INVALID_PARAMS` with `data.path`
+  and `data.issues`; it used to throw the parser's `TypeError`.
+- A `template.invalid_schema` error from a port maps to `INVALID_PARAMS`; it
+  mapped to `INTERNAL_ERROR`.
+- `form.create_document` no longer lists `data` as required in its
+  `inputSchema` (the handler always treated it as optional).
+
 ## [0.2.1] - 2026-09-27
 
 ### Fixed — tool arguments are checked before they are read

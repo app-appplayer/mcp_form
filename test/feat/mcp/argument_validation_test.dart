@@ -211,14 +211,53 @@ void main() {
       expect(pathsOf(e), ['patches[0].op']);
     });
 
-    test('an enum value outside the list', () async {
-      final e = await refusal('form.patch', {
-        'documentId': 'd',
-        'patches': [
-          {'op': 'explode', 'path': '/x'}
-        ],
-      });
-      expect(pathsOf(e), ['patches[0].op']);
+    test('enum and range are described, not enforced — as in 0.2.0', () async {
+      // A host may register a renderer for a format no list names, and a
+      // limit above the documented range was always served.
+      for (final c in <(String, Map<String, dynamic>)>[
+        ('form.render', {'documentId': 'missing', 'format': 'png'}),
+        ('form.render', {'documentId': 'missing', 'format': 'svg'}),
+        (
+          'form.patch',
+          {
+            'documentId': 'missing',
+            'patches': [
+              {'op': 'explode', 'path': '/x'}
+            ],
+          }
+        ),
+      ]) {
+        final e = await refusal(c.$1, c.$2);
+        expect(e.message, isNot(contains('Invalid arguments')),
+            reason: '${c.$1} ${c.$2} was refused by the argument check');
+      }
+      for (final args in <Map<String, dynamic>>[
+        {'limit': 500},
+        {'limit': 0},
+        {'offset': -1},
+      ]) {
+        final r = await handler.handleToolCall(
+            toolName: 'form.list_templates', arguments: args);
+        expect(r, contains('templates'), reason: '$args');
+      }
+    });
+
+    test('the validator still enforces constraints when asked', () {
+      final schema = {
+        'type': 'object',
+        'properties': {
+          'n': {'type': 'integer', 'minimum': 1, 'maximum': 3},
+          'f': {
+            'type': 'string',
+            'enum': ['a', 'b']
+          },
+        },
+      };
+      expect(validateArgument({'n': 9, 'f': 'z'}, schema).map((i) => i.path),
+          unorderedEquals(['f', 'n']));
+      expect(
+          validateArgument({'n': 9, 'f': 'z'}, schema, checkConstraints: false),
+          isEmpty);
     });
 
     test('create_document takes no data, as its description says', () async {

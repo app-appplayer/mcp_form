@@ -77,11 +77,17 @@ class FormToolHandler {
   /// as that cast's text, which names neither the argument nor the fix. The
   /// answer is `INVALID_PARAMS` listing every problem with its path; for a
   /// template the form error code is `template.invalid_schema`.
+  ///
+  /// Only the shape is enforced. `enum`, `minimum` and `maximum` in these
+  /// schemas describe the usual values; the ports decide the rest — a host
+  /// may register a renderer for a format no list here names, and a
+  /// `limit` above the documented range is served, as it always was.
   static void _checkArguments(
     McpToolDefinition definition,
     Map<String, dynamic> arguments,
   ) {
-    final issues = validateArgument(arguments, definition.inputSchema);
+    final issues = validateArgument(arguments, definition.inputSchema,
+        checkConstraints: false);
     if (issues.isEmpty) return;
     final first = issues.first;
     final more = issues.length > 1 ? ' (and ${issues.length - 1} more)' : '';
@@ -245,7 +251,7 @@ class FormToolHandler {
         'documentId': {'type': 'string'},
         'format': {
           'type': 'string',
-          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image'],
+          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image', 'png'],
         },
         'options': {
           'type': 'object',
@@ -310,7 +316,7 @@ class FormToolHandler {
         'documentId': {'type': 'string'},
         'format': {
           'type': 'string',
-          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image'],
+          'enum': ['pdf', 'html', 'docx', 'markdown', 'uiDsl', 'image', 'png'],
         },
       },
     },

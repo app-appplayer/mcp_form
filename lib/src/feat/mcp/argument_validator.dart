@@ -33,13 +33,18 @@ class ArgumentIssue {
 ///
 /// All problems are collected rather than stopping at the first, so one
 /// answer tells the caller everything to fix.
+///
+/// With [checkConstraints] false, `enum`, `minimum` and `maximum` are read as
+/// description and not enforced — only the shape (`type`, `required`, and
+/// what `$ref` / `x-discriminator` lead to) is checked.
 List<ArgumentIssue> validateArgument(
   Object? value,
   Map<String, dynamic> schema, {
   String path = '',
+  bool checkConstraints = true,
 }) {
   final issues = <ArgumentIssue>[];
-  _check(value, schema, path, issues, schema);
+  _check(value, schema, path, issues, schema, checkConstraints);
   return issues;
 }
 
@@ -49,11 +54,14 @@ void _check(
   String path,
   List<ArgumentIssue> issues,
   Map<String, dynamic> root,
+  bool checkConstraints,
 ) {
   final ref = schema[r'$ref'];
   if (ref is String) {
     final target = _resolve(ref, root);
-    if (target != null) _check(value, target, path, issues, root);
+    if (target != null) {
+      _check(value, target, path, issues, root, checkConstraints);
+    }
     return;
   }
 
@@ -65,12 +73,12 @@ void _check(
   }
 
   final allowed = schema['enum'];
-  if (allowed is List && !allowed.contains(value)) {
+  if (checkConstraints && allowed is List && !allowed.contains(value)) {
     issues.add(ArgumentIssue(
         _display(path), 'must be one of ${allowed.join(', ')}, got $value'));
   }
 
-  if (value is num) {
+  if (checkConstraints && value is num) {
     final min = schema['minimum'];
     final max = schema['maximum'];
     if (min is num && value < min) {
@@ -85,7 +93,9 @@ void _check(
     final discriminator = schema['x-discriminator'];
     if (discriminator is Map) {
       final branch = _branchFor(value, discriminator);
-      if (branch != null) _check(value, branch, path, issues, root);
+      if (branch != null) {
+        _check(value, branch, path, issues, root, checkConstraints);
+      }
     }
 
     final required = schema['required'];
@@ -103,7 +113,7 @@ void _check(
         final child = value[entry.key];
         if (child == null || entry.value is! Map) continue;
         _check(child, (entry.value as Map).cast<String, dynamic>(),
-            _join(path, '${entry.key}'), issues, root);
+            _join(path, '${entry.key}'), issues, root, checkConstraints);
       }
     }
   }
@@ -112,8 +122,8 @@ void _check(
     final items = schema['items'];
     if (items is Map) {
       for (var i = 0; i < value.length; i++) {
-        _check(
-            value[i], items.cast<String, dynamic>(), '$path[$i]', issues, root);
+        _check(value[i], items.cast<String, dynamic>(), '$path[$i]', issues,
+            root, checkConstraints);
       }
     }
   }
