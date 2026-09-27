@@ -1,3 +1,28 @@
+## [0.2.1] - 2026-09-27
+
+### Fixed — tool arguments are checked before they are read
+- Every `form.*` call is checked against its tool's `inputSchema` before a
+  handler reads an argument. A missing or mistyped argument used to reach a
+  cast and come back as its text (`type 'Null' is not a subtype of type
+  'String' in type cast`). It now answers `INVALID_PARAMS` with
+  `data.path` and every problem in `data.issues` (`{path, message}`), e.g.
+  `template.layoutPolicy.fontPolicy is required`.
+- `form.save_template` checks the template against a FormTemplate schema
+  written from the model's own parser — the nine block types, blocks nested
+  in `repeatable` and `conditional`, an unknown block type checked as the
+  text block it reads as. Its answer carries `formErrorCode:
+  template.invalid_schema`. The tool's `inputSchema` now publishes that
+  schema, so a host can check a template before calling.
+- `template.invalid_schema` from a port maps to `INVALID_PARAMS`; it fell
+  through to `INTERNAL_ERROR`.
+- `form.create_document` declared `data` as required while its description,
+  its test and its handler treat it as optional; the schema now matches, so
+  a document can be created with no initial data.
+
+### Added
+- `validateArgument` (`lib/src/feat/mcp/argument_validator.dart`) and
+  `formTemplateJsonSchema` (`lib/src/feat/mcp/form_template_json_schema.dart`).
+
 ## [0.2.0] - 2026-06-30 - Document rendering engine
 
 A landmark, fully additive release: mcp_form grows from form port adapters into a

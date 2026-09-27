@@ -5,6 +5,8 @@ import 'package:mcp_bundle/mcp_bundle.dart';
 import '../../core/schema/capacity.dart';
 import '../../core/schema/json_schema_export.dart';
 import '../../core/workflow/workflow_engine.dart';
+import 'argument_validator.dart';
+import 'form_template_json_schema.dart';
 import 'mcp_types.dart';
 
 /// Handles MCP tool calls for the form.* namespace.
@@ -33,6 +35,8 @@ class FormToolHandler {
     required String toolName,
     required Map<String, dynamic> arguments,
   }) async {
+    final definition = _definitionsByName[toolName];
+    if (definition != null) _checkArguments(definition, arguments);
     try {
       return switch (toolName) {
         'form.list_templates' => await _handleListTemplates(arguments),
@@ -60,6 +64,38 @@ class FormToolHandler {
     } on FormError catch (e) {
       throw mapFormErrorToMcpError(e);
     }
+  }
+
+  late final Map<String, McpToolDefinition> _definitionsByName = {
+    for (final d in toolDefinitions) d.name: d,
+  };
+
+  /// Every tool's arguments are checked against its own input schema before
+  /// anything reads them, whether or not the host validated them first.
+  ///
+  /// A missing or mistyped argument otherwise reaches a cast and comes back
+  /// as that cast's text, which names neither the argument nor the fix. The
+  /// answer is `INVALID_PARAMS` listing every problem with its path; for a
+  /// template the form error code is `template.invalid_schema`.
+  static void _checkArguments(
+    McpToolDefinition definition,
+    Map<String, dynamic> arguments,
+  ) {
+    final issues = validateArgument(arguments, definition.inputSchema);
+    if (issues.isEmpty) return;
+    final first = issues.first;
+    final more = issues.length > 1 ? ' (and ${issues.length - 1} more)' : '';
+    final inTemplate = definition.name == 'form.save_template' &&
+        first.path.startsWith('template');
+    throw McpToolError(
+      code: 'INVALID_PARAMS',
+      message: 'Invalid arguments for ${definition.name}: $first$more',
+      data: {
+        if (inTemplate) 'formErrorCode': 'template.invalid_schema',
+        'path': first.path,
+        'issues': [for (final i in issues) i.toJson()],
+      },
+    );
   }
 
   /// List all registered tool definitions for MCP discovery.
@@ -113,11 +149,9 @@ class FormToolHandler {
       'type': 'object',
       'required': ['template'],
       'properties': {
-        'template': {
-          'type': 'object',
-          'description': 'Full FormTemplate JSON (FormTemplate.toJson shape)',
-        },
+        'template': formTemplateObjectSchema,
       },
+      r'$defs': formTemplateSchemaDefs,
     },
   );
 
@@ -288,7 +322,7 @@ class FormToolHandler {
         'Create a new document from a template with optional initial data',
     inputSchema: {
       'type': 'object',
-      'required': ['templateId', 'data'],
+      'required': ['templateId'],
       'properties': {
         'templateId': {'type': 'string'},
         'data': {'type': 'object'},
@@ -740,6 +774,7 @@ class FormToolHandler {
   static McpToolError mapFormErrorToMcpError(FormError error) {
     final mcpCode = switch (error.code) {
       'template.not_found' => 'NOT_FOUND',
+      'template.invalid_schema' => 'INVALID_PARAMS',
       'template.version_not_found' => 'NOT_FOUND',
       'document.not_found' => 'NOT_FOUND',
       'form.document_not_found' => 'NOT_FOUND',
